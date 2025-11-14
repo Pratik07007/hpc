@@ -1,0 +1,17 @@
+#include <stdio.h>
+#incude <stdlib.h>
+
+int main()
+{
+
+int n;
+int *p;
+n=3;
+p=&n;
+printf("The value of n is %d",n);
+printf("The value of p is %d",*p);
+printf("The memory address is %p",p);
+return 0;
+
+}
+

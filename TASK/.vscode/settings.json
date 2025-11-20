@@ -1,0 +1,13 @@
+{
+  "files.associations": {
+    "*.embeddedhtml": "html",
+    "__config": "c",
+    "__locale": "c",
+    "locale": "c",
+    "typeinfo": "c",
+    "version": "c",
+    "queue": "c",
+    "stack": "c",
+    "stdlib.h": "c"
+  }
+}

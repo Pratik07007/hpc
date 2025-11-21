@@ -14,59 +14,35 @@ typedef struct
 {
     Product *product;
     int qty;
-} OrderItem;
+} CartItem;
 
-Product Products[] = {
-    {1, "Pen", 25.0, 0},
-    {2, "Pencil", 15.0, 0},
-    {3, "Rice", 80.0, 0},
-    {4, "Coffee", 250.0, 1},
-    {5, "Salt", 30.0, 0},
-    {6, "Sugar", 45.0, 0},
-    {7, "Milk", 60.0, 0},
-    {8, "Paneer", 120.0, 1},
-    {9, "Tofu", 90.0, 1},
-    {10, "Notebook", 40.0, 0}};
+Product PRODUCTS[] = {
+    {1, "Eraser", 12.0, 0},
+    {2, "Sharpener", 18.0, 0},
+    {3, "Wheat", 75.0, 0},
+    {4, "Tea", 220.0, 1},
+    {5, "Pepper", 35.0, 0},
+    {6, "Honey", 95.0, 0},
+    {7, "Curd", 55.0, 0},
+    {8, "Cheese", 150.0, 1},
+    {9, "Butter", 110.0, 1},
+    {10, "Sketchbook", 65.0, 0}};
 
-int PRODUCT_COUNT = sizeof(Products) / sizeof(Products[0]);
-
-// this function returns a pointer to the product with the given id
-// if the product is not found, it returns NULL
-Product *find_product_by_id(int id)
-
-{
-    for (int i = 0; i < PRODUCT_COUNT; i++)
-    {
-        if (Products[i].id == id)
-            return &Products[i];
-    }
-    return NULL;
-}
-
-void print_products_list()
-{
-    printf("┌────┬────────────┬────────┬─────────┐\n");
-    printf("│ ID │ Name       │ Price  │ Taxable │\n");
-    printf("├────┼────────────┼────────┼─────────┤\n");
-    for (int i = 0; i < PRODUCT_COUNT; i++)
-    {
-        printf("│ %2d │ %-10s │ %6.2f │    %s   │\n",
-               Products[i].id,
-               Products[i].name,
-               Products[i].price,
-               Products[i].taxable ? "Yes" : "No");
-    }
-    printf("└────┴────────────┴────────┴─────────┘\n");
-}
+int PRODUCT_COUNT = sizeof(PRODUCTS) / sizeof(PRODUCTS[0]);
 
 int main()
 {
-    OrderItem *cart = malloc(2 * sizeof(OrderItem));
+    CartItem *cart = malloc(2 * sizeof(CartItem));
+    if (!cart)
+    {
+        printf("Memory allocation failed\n");
+        return 1;
+    }
+
     int capacity = 2;
     int item_count = 0;
     int invoice_no = 1;
 
-    // Read the new invoice number from file
     FILE *invFile = fopen("invoiceNumber.txt", "r");
     if (invFile)
     {
@@ -74,7 +50,18 @@ int main()
         fclose(invFile);
     }
 
-    print_products_list();
+    printf("┌────┬────────────┬────────┬─────────┐\n");
+    printf("│ ID │ Name       │ Price  │ Taxable │\n");
+    printf("├────┼────────────┼────────┼─────────┤\n");
+    for (int i = 0; i < PRODUCT_COUNT; i++)
+    {
+        printf("│ %2d │ %-10s │ %6.2f │    %s   │\n",
+               PRODUCTS[i].id,
+               PRODUCTS[i].name,
+               PRODUCTS[i].price,
+               PRODUCTS[i].taxable ? "Yes" : "No");
+    }
+    printf("└────┴────────────┴────────┴─────────┘\n");
 
     while (1)
     {
@@ -87,14 +74,21 @@ int main()
             printf("\nEnter Product ID: ");
             if (scanf("%d", &pid) != 1)
             {
-                // Clear invalid input
                 while (getchar() != '\n')
                     ;
                 printf("Invalid input. Please enter a valid Product ID.\n");
                 continue;
             }
 
-            Product *p = find_product_by_id(pid);
+            Product *p = NULL;
+            for (int i = 0; i < PRODUCT_COUNT; i++)
+            {
+                if (PRODUCTS[i].id == pid)
+                {
+                    p = &PRODUCTS[i];
+                    break;
+                }
+            }
             if (!p)
             {
                 printf("Invalid Product ID. Please try again.\n");
@@ -108,7 +102,6 @@ int main()
             printf("Enter Quantity: ");
             if (scanf("%d", &qty) != 1 || qty <= 0)
             {
-                // Clear invalid input
                 while (getchar() != '\n')
                     ;
                 printf("Invalid Quantity. Please enter a positive number.\n");
@@ -116,22 +109,31 @@ int main()
             }
             break;
         }
-
+        // halnu agadi check garxa
         if (item_count == capacity)
         {
-            int new_capacity = capacity == 0 ? 2 : capacity * 2;
-            OrderItem *temp = realloc(cart, new_capacity * sizeof(OrderItem));
-            if (!temp)
+            int new_capacity = capacity + 2;
+            CartItem *newMemory = realloc(cart, new_capacity * sizeof(CartItem));
+            if (!newMemory)
             {
                 printf("Memory allocation failed\n");
                 free(cart);
                 return 1;
             }
-            cart = temp;
+            cart = newMemory;
             capacity = new_capacity;
         }
 
-        cart[item_count].product = find_product_by_id(pid);
+        Product *p = NULL;
+        for (int i = 0; i < PRODUCT_COUNT; i++)
+        {
+            if (PRODUCTS[i].id == pid)
+            {
+                p = &PRODUCTS[i];
+                break;
+            }
+        }
+        cart[item_count].product = p;
         cart[item_count].qty = qty;
         item_count++;
 

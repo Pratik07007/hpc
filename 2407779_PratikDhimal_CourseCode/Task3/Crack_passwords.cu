@@ -4,154 +4,161 @@
 #include <cuda_runtime.h>
 
 #define HASH_LEN 100
-#define RES_LEN 5
-#define TABLE_SIZE 67600 
+#define PASSWORD_LEN 5
+#define HASH_TABLE_SIZE 67600
 
-__device__ int is_match(const char* s1, const char* s2) {
-    for(int i=0; i<HASH_LEN; i++) {
-        if(s1[i] != s2[i]) return 0;
-        if(s1[i] == '\0') break;
+__device__ int strings_equal(const char* a, const char* b) {
+    for (int i = 0; i < HASH_LEN; i++) {
+        if (a[i] != b[i]) return 0;
+        if (a[i] == '\0') break;
     }
     return 1;
 }
 
-// convert index back to raw passwords ( as required for us)
-__device__ void idx_to_raw(int idx, char* out) {
-    out[0] = 'a' + (idx / 2600);
-    idx %= 2600;
-    out[1] = 'a' + (idx / 100);
-    idx %= 100;
-    out[2] = '0' + (idx / 10);
-    out[3] = '0' + (idx % 10);
-    out[4] = '\0';
+__device__ void index_to_password(int index, char* password) {
+    password[0] = 'a' + (index / 2600);
+    index %= 2600;
+    password[1] = 'a' + (index / 100);
+    index %= 100;
+    password[2] = '0' + (index / 10);
+    password[3] = '0' + (index % 10);
+    password[4] = '\0';
 }
 
-// kernel: compare targets vs cuda_hashes table
-__global__ void crack_hashes(char* targets, char* cuda_hashes, char* results, int n_targets) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if(idx >= n_targets) return;
+__global__ void crack_passwords(
+    char* target_hashes,
+    char* precomputed_hashes,
+    char* cracked_passwords,
+    int target_count
+) {
+    int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (thread_id >= target_count) return;
 
-    char* my_target = &targets[idx * HASH_LEN];
-    char* my_result = &results[idx * RES_LEN];
+    char* current_target = &target_hashes[thread_id * HASH_LEN];
+    char* output_password = &cracked_passwords[thread_id * PASSWORD_LEN];
 
-    int found = 0;
-    for(int k=0; k<TABLE_SIZE; k++) {
-        char* table_entry = &cuda_hashes[k * HASH_LEN];
-        
-        if(is_match(my_target, table_entry)) {
-            idx_to_raw(k, my_result);
-            found = 1;
+    int match_found = 0;
+
+    for (int table_index = 0; table_index < HASH_TABLE_SIZE; table_index++) {
+        char* table_hash = &precomputed_hashes[table_index * HASH_LEN];
+
+        if (strings_equal(current_target, table_hash)) {
+            index_to_password(table_index, output_password);
+            match_found = 1;
             break;
         }
     }
 
-    if(!found) {
-        my_result[0] = '?'; my_result[1] = '?';
-        my_result[2] = '?'; my_result[3] = '?';
-        my_result[4] = '\0';
+    if (!match_found) {
+        output_password[0] = 'X';
+        output_password[1] = 'X';
+        output_password[3] = 'X';
+        output_password[4] = '\0';
     }
 }
 
-// helper to read file into flat array
-int load_file(const char* fname, char** buffer, int* count) {
-    FILE* fp = fopen(fname, "r");
-    if(!fp) return 0;
+int read_hash_file(const char* filename, char** buffer, int* line_count) {
+    FILE* file = fopen(filename, "r");
+    if (!file) return 0;
 
-    if(*count == 0) {
-        char tmp[200];
-        while(fgets(tmp, 200, fp)) (*count)++;
-        rewind(fp);
+    if (*line_count == 0) {
+        char temp[200];
+        while (fgets(temp, 200, file)) (*line_count)++;
+        rewind(file);
     }
 
-    *buffer = (char*)malloc((*count) * HASH_LEN);
+    *buffer = (char*)malloc((*line_count) * HASH_LEN);
+
     char line[200];
     int i = 0;
-
-    while(fgets(line, 200, fp) && i < *count) {
+    while (fgets(line, 200, file) && i < *line_count) {
         line[strcspn(line, "\r\n")] = 0;
         strcpy(&(*buffer)[i * HASH_LEN], line);
         i++;
     }
 
-    fclose(fp);
+    fclose(file);
     return 1;
 }
 
 int main(int argc, char** argv) {
-    if(argc != 4) {
-        printf("Usage: %s <target_hashes_file> <cuda_hashes_file> <output_file>\n", argv[0]);
+    if (argc != 4) {
+        printf("Usage: %s <target_hashes> <gpu_hash_bank> <output_file>\n", argv[0]);
         return 1;
     }
 
-    // Load all files from command line
-    const char* target_file = argv[1];
-    const char* cuda_hash_file = argv[2];
+    const char* target_hash_file = argv[1];
+    const char* hash_table_file = argv[2];
     const char* output_file = argv[3];
 
-    char* h_targets = NULL;
-    int n_targets = 0;
-    if(!load_file(target_file, &h_targets, &n_targets)) {
-        printf("Failed to load target hashes file\n");
-        return 1;
-    }
-    printf("loaded %d targets\n", n_targets);
+    char* host_targets = NULL;
+    int target_count = 0;
 
-    char* h_cuda_hashes = NULL;
-    int n_table = TABLE_SIZE;
-    if(!load_file(cuda_hash_file, &h_cuda_hashes, &n_table)) {
-        printf("Failed to load cuda hashes file\n");
-        free(h_targets);
+    if (!read_hash_file(target_hash_file, &host_targets, &target_count)) {
+        printf("Failed to load target hashes\n");
         return 1;
     }
 
-    // Allocate memory inside the device
-    char *d_targets, *d_cuda_hashes, *d_results;
-    cudaMalloc(&d_targets, n_targets * HASH_LEN);
-    cudaMalloc(&d_cuda_hashes, TABLE_SIZE * HASH_LEN);
-    cudaMalloc(&d_results, n_targets * RES_LEN);
+    printf("Loaded %d target hashes\n", target_count);
 
-    // Copy into the device
-    cudaMemcpy(d_targets, h_targets, n_targets * HASH_LEN, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_cuda_hashes, h_cuda_hashes, TABLE_SIZE * HASH_LEN, cudaMemcpyHostToDevice);
+    char* host_hash_table = NULL;
+    int table_count = HASH_TABLE_SIZE;
 
-    // Dynamic launch configuration based on hardware
-    cudaDeviceProp prop;
-    cudaGetDeviceProperties(&prop, 0);
-    
-    int threads = prop.maxThreadsPerBlock / 2;
-    threads = (threads / 32) * 32;
-    if (threads == 0) threads = 32;
+    if (!read_hash_file(hash_table_file, &host_hash_table, &table_count)) {
+        printf("Failed to load hash table\n");
+        free(host_targets);
+        return 1;
+    }
 
-    int blocks = (n_targets + threads - 1) / threads;
+    char *device_targets, *device_hash_table, *device_results;
+    cudaMalloc(&device_targets, target_count * HASH_LEN);
+    cudaMalloc(&device_hash_table, HASH_TABLE_SIZE * HASH_LEN);
+    cudaMalloc(&device_results, target_count * PASSWORD_LEN);
 
-    printf("Kernel config: %d blocks, %d threads\n", blocks, threads);
+    cudaMemcpy(device_targets, host_targets, target_count * HASH_LEN, cudaMemcpyHostToDevice);
+    cudaMemcpy(device_hash_table, host_hash_table, HASH_TABLE_SIZE * HASH_LEN, cudaMemcpyHostToDevice);
 
-    // Launch th kernel
-    crack_hashes<<<blocks, threads>>>(d_targets, d_cuda_hashes, d_results, n_targets);
+
+
+    int blockSize = 256;  // 256 threads = 8 warps
+    int gridSize  = (target_count + blockSize - 1) / blockSize;
+
+    printf("Kernel launch: %d blocks, %d threads\n", gridSize, blockSize);
+
+
+
+    crack_passwords<<<gridSize, blockSize>>>(
+        device_targets,
+        device_hash_table,
+        device_results,
+        target_count
+    );
+
     cudaDeviceSynchronize();
 
-    char* h_results = (char*)malloc(n_targets * RES_LEN);
-    cudaMemcpy(h_results, d_results, n_targets * RES_LEN, cudaMemcpyDeviceToHost);
+    char* host_results = (char*)malloc(target_count * PASSWORD_LEN);
+    cudaMemcpy(host_results, device_results, target_count * PASSWORD_LEN, cudaMemcpyDeviceToHost);
 
-    FILE* fp = fopen(output_file, "w");
-    if(!fp) {
+    FILE* output = fopen(output_file, "w");
+    if (!output) {
         printf("Failed to open output file\n");
         return 1;
     }
 
-    for(int i=0; i<n_targets; i++) {
-        fprintf(fp, "%s\n", &h_results[i * RES_LEN]);
+    for (int i = 0; i < target_count; i++) {
+        fprintf(output, "%s\n", &host_results[i * PASSWORD_LEN]);
     }
-    fclose(fp);
 
-    printf("Passwords successfully cracked\n");
+    fclose(output);
 
-    free(h_targets);
-    free(h_cuda_hashes);
-    free(h_results);
-    cudaFree(d_targets);
-    cudaFree(d_cuda_hashes);
-    cudaFree(d_results);
+    printf("Password cracking completed successfully\n");
+
+    free(host_targets);
+    free(host_hash_table);
+    free(host_results);
+    cudaFree(device_targets);
+    cudaFree(device_hash_table);
+    cudaFree(device_results);
 
     return 0;
 }

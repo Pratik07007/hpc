@@ -20,10 +20,10 @@ int main(int argc, char* argv[]) {
     char line[100];
     // read every line
     while(fgets(line, sizeof(line), fin)) {
-        // strip newline calls
+        
         line[strcspn(line, "\r\n")] = 0;
         
-        // hash it using linux crypt lib
+        // hash it using  crypt lib
         char* hash = crypt(line, SALT);
         
         // save hash
